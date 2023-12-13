@@ -1,0 +1,233 @@
+<html>
+  <head>
+    <title>OBS Overlay</title>
+    <link rel="stylesheet" type="text/css" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/feather-icons/dist/feather.min.js"></script>
+    <script>
+      /** How often to check for changes when no player is playing. */
+      const idleInterval = 500;
+
+      /** Keeps track of the previous player state, so we can look for changes. */
+      var lastState;
+
+      /**
+       * Check whether there is any player currently playing a track.
+       *
+       * @param state the player parameters object returned by params.json.
+       * @return true if at least one player is playing something.
+       */
+      function isAnyPlayerPlaying(state) {
+        return state && Object.values(state.players).find(player => player["is-playing"]) !== undefined;
+      }
+
+      /**
+       * Calculate how long to wait before next performing an action, depending on player state.
+       * If no player is active, return whichever is larger of idleInterval and activeInterval.
+       * Otherwise return interval.
+       *
+       * @param activeInterval how many milliseconds to wait if at least one player is playing.
+       * @return the number of milliseconds after which an activity should reschedule itself.
+       */
+      function nextInterval(activeInterval) {
+        if (isAnyPlayerPlaying(lastState)) {
+          return activeInterval;
+        }
+        return (idleInterval > activeInterval)? idleInterval : activeInterval;
+      }
+
+      /**
+       * Reloads the master playuer artwork at the speciried interval. If no player is playing, then
+       * idleInterval will be used instead, unless the specified interval is already longer.
+       *
+       * @param interval the number of milliseconds that should elapse between reloads.
+       */
+      function refreshArt(interval) {
+        const element = document.getElementById('art');
+        const refresher = function() {
+          fetch('params.json')
+            .then(response => {
+              if (response.status == 200) {
+                response.json()
+                  .then(state => {
+                    console.log('art');
+                    if (state.master && state.master.number) {
+                      element.src = '/artwork/' + state.master.number + '?icons=true';
+                    }
+                    setTimeout(refresher, nextInterval(interval));
+                  })
+              } else {
+                console.error('Problem updating OBS overlay parameters', response);
+                setTimeout(refresher, 5000);
+              }
+            })
+            .catch(error => {
+              // TODO: Show something on the page itself.
+              console.error('Problem communicating with OBS overlay server', error);
+              setTimeout(refresher, 30000);
+            });
+        }
+        setTimeout(refresher, nextInterval(interval));
+      }
+
+      /**
+       * Given an old and new value for a text element on the page,
+       * if they differ, updates the corresponding DOM element to contain
+       * the new text.
+       *
+       * @param id the DOM id of the element to be updated.
+       * @param current what the new value for this element should be.
+       * @param last the previous value of the element.
+       */
+      function updateIfChanged(id, current, last) {
+        if (current !== last) {
+          document.getElementById(id).textContent = current;
+        }
+      }
+
+      function updateArtIfChanged(current, last) {
+        if (current !== last) {
+          document.getElementById('art').src = '/artwork/' + current + '?icons=true&t=' + Date.now(); // append time for cache busting
+        }
+      }
+
+      /**
+       * Compares the most recently received server state with the previous one, and updates
+       * any page text elements whose values need to be be changed.
+       *
+       * @param state the new server state object.
+       */
+      function applyChanges(state) {
+        const player = state && state.master;
+        const lastPlayer = lastState && lastState.master;
+        const track = state.master.track;
+        const lastTrack = lastPlayer && lastPlayer.track;
+
+        const master = document.getElementById('master');
+        master.style.opacity = player['is-playing'] ? 1 : 0;
+
+        updateArtIfChanged(player && player.number, lastPlayer && lastPlayer.number);
+        updateIfChanged('artist', track && track.artist, lastTrack && lastTrack.artist);
+        updateIfChanged('title', track && track.title, lastTrack && lastTrack.title);
+        updateIfChanged('album', track && track.album, lastTrack && lastTrack.album);
+        updateIfChanged('label', track && track.label, lastTrack && lastTrack.label);
+      }
+
+      /**
+       * Periodically determines the current player state, and updates the page appropriately.
+       *
+       * @param interval how often the should be updated, in milliseconds, when a player is active.
+       */
+      function updateState(interval) {
+        const updater = function() {
+          fetch('params.json')
+            .then(response => {
+              if (response.status == 200) {
+                response.json()
+                  .then(state => {
+                    applyChanges(state);
+                    lastState = state;
+                    setTimeout(updater, nextInterval(interval));
+                  })
+              } else {
+                console.error('Problem updating OBS overlay parameters', response);
+                setTimeout(updater, 5000);
+              }})
+            .catch(error => {
+              // TODO: Show something on the page itself.
+              console.error('Problem communicating with OBS overlay server', error);
+              setTimeout(updater, 30000);
+            });
+        }
+        updater();
+      }
+
+      updateState(66);
+
+    </script>
+    <style>
+      body {
+        margin: 0;
+      }
+
+      .master {
+        color: white;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 1em;
+        opacity: 0;
+        text-shadow: 1px 1px 1px rgb(0 0 0 / 0.4);
+        transition: .2s opacity;
+      }
+
+      .master,
+      .master .attributes {
+        display: flex;
+      }
+
+      .master .art {
+        background-color: #000;
+      }
+      
+      .master .metadata {
+        padding: 0 8px;
+      }
+      
+      .master div > span {
+        background-color: rgba(0, 0, 0, 0.25);
+        display: inline-block;
+        margin: 1px 0;
+        padding: 2px 4px;
+      }
+
+      .master div:first-child > span {
+        margin-top: 0;
+      }
+      
+      .master .title {
+        font-size: larger;
+        font-weight: bold;
+      }
+
+      .master .attributes > span {
+        align-items: center;
+        display: flex;
+        margin-right: 4px;
+      }
+
+      .master .attributes > span > svg {
+        margin-right: 4px;
+        filter: drop-shadow(1px 1px 2px rgb(0 0 0 / 0.4));
+      }
+
+     
+    </style>
+  </head>
+  <body>
+    <div id="master" class="master">
+      <div class="art">
+        <img id="art" src="artwork/{{master.number}}?icons=true" width="80" height="80">
+      </div>
+      <div class="metadata">
+        <div>
+          <span id="title" class="title">{{master.track.title}}</span>
+        </div>
+        <div>
+          <span id="artist" class="artist">{{master.track.artist}}</span>
+        </div>
+        <div class="attributes">
+          <span class="album">
+            <i data-feather="disc"></i>
+            <span id="album">{{master.track.album}}</span>
+          </span>
+          <span class="label">
+            <i data-feather="layers"></i>
+            <span id="label">{{master.track.label}}</span>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      feather.replace({ width: "1em" });
+    </script>
+  </body>
+</html>
